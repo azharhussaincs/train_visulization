@@ -4,6 +4,7 @@ from dash import Dash, dcc, html, dash_table, Input, Output
 import mysql.connector
 import warnings
 import logging
+
 warnings.filterwarnings(
     "ignore",
     message="pandas only supports SQLAlchemy connectable"
@@ -11,7 +12,6 @@ warnings.filterwarnings(
 
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
-
 
 # ---------------------------
 # Local MySQL connection
@@ -183,7 +183,7 @@ app.layout = html.Div(
             ]
         ),
 
-        # Chart with spinner
+        # Chart
         html.Div(
             style={
                 "backgroundColor": "white",
@@ -241,11 +241,12 @@ app.layout = html.Div(
 )
 
 # ---------------------------
-# Refresh callback
+# Refresh callback (FIXED)
 # ---------------------------
 @app.callback(
     Output("rake-bar-chart", "figure"),
     Output("station-table", "data"),
+    Output("station-table", "columns"),
     Output("total-records", "children"),
     Output("military-records", "children"),
     Output("refresh-btn", "children"),
@@ -253,7 +254,6 @@ app.layout = html.Div(
     Input("refresh-btn", "n_clicks")
 )
 def refresh_dashboard(n_clicks):
-    button_text = "⏳ Refreshing..." if n_clicks else "🔄 Refresh Data"
 
     df = load_data()
     df["Military_Flag"] = df.apply(detect_military, axis=1)
@@ -274,9 +274,12 @@ def refresh_dashboard(n_clicks):
     ]
     station_df = mil_df[station_cols].drop_duplicates()
 
+    table_columns = [{"name": c, "id": c} for c in station_df.columns]
+
     return (
         fig,
         station_df.to_dict("records"),
+        table_columns,
         len(df),
         len(mil_df),
         "🔄 Refresh Data",
