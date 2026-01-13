@@ -13,7 +13,7 @@ table_name = "rail_rem_rake_20251126100147"
 # Local MySQL connection
 # -----------------------------
 local_host = "localhost"
-local_user = "root"           # Your local MySQL user
+local_user = "root"
 local_password = "admin"
 local_db = "in_railin_local"
 
@@ -49,7 +49,7 @@ try:
     # Switch to local database
     local_conn.database = local_db
 
-    # Create table with auto-increment local_id and same columns as remote
+    # Create table
     column_definitions = ", ".join([f"{col} TEXT" for col in columns])
     create_table_sql = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
@@ -59,19 +59,35 @@ try:
     """
     local_cursor.execute(create_table_sql)
     local_conn.commit()
-    print(f"✅ Local table '{table_name}' ensured with TEXT columns.")
+    print(f"✅ Local table '{table_name}' ensured.")
 
-    # Insert rows into local table
+    # 🔹 ADD UNIQUE INDEX TO PREVENT DUPLICATES (SAFE)
+    unique_cols = ", ".join(columns)
+    create_unique_index_sql = f"""
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_{table_name}
+    ON {table_name} ({unique_cols});
+    """
+    try:
+        local_cursor.execute(create_unique_index_sql)
+        local_conn.commit()
+        print("✅ Unique index ensured (duplicates prevention enabled).")
+    except mysql.connector.Error:
+        pass  # index already exists
+
+    # Insert rows (IGNORE duplicates)
     inserted_count = 0
     for row in rows:
         placeholders = ", ".join(["%s"] * len(row))
         columns_str = ", ".join(columns)
-        sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
+        sql = f"""
+        INSERT IGNORE INTO {table_name} ({columns_str})
+        VALUES ({placeholders})
+        """
         local_cursor.execute(sql, row)
         inserted_count += local_cursor.rowcount
 
     local_conn.commit()
-    print(f"✅ {inserted_count} rows inserted into local table.")
+    print(f"✅ {inserted_count} NEW rows inserted (duplicates ignored).")
 
 except mysql.connector.Error as err:
     print("❌ MySQL error:", err)

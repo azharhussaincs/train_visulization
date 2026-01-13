@@ -1,6 +1,6 @@
 import pandas as pd
 import plotly.express as px
-from dash import Dash, dcc, html, dash_table, Input, Output
+from dash import Dash, dcc, html, dash_table
 import mysql.connector
 import warnings
 import logging
@@ -26,52 +26,40 @@ table_name = "rail_rem_rake_20251126100147"
 # Load dataset from MySQL
 # ---------------------------
 def load_data():
-    local_conn = mysql.connector.connect(
+    conn = mysql.connector.connect(
         host=local_host,
         user=local_user,
         password=local_password,
         database=local_db
     )
-    query = f"SELECT * FROM {table_name}"
-    df = pd.read_sql(query, local_conn)
-    local_conn.close()
+    df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+    conn.close()
+
+    if "RADSTTSCHNGTIME" in df.columns:
+        df["RADSTTSCHNGTIME"] = pd.to_datetime(df["RADSTTSCHNGTIME"], errors="coerce")
+        df["Date"] = df["RADSTTSCHNGTIME"].dt.date
+
     return df
 
 # ---------------------------
-# Detect Military Related Records
+# Detect Military Records
 # ---------------------------
 def detect_military(row):
     text = " ".join(str(x) for x in row.values).upper()
-    keywords = [
-        "DRDO",
-        "ARMY",
-        "MILY",
-        "MILITARY",
-        "DEFENCE",
-        "DEFENSE",
-        "ORDNANCE",
-        "SPL"
-    ]
+    keywords = ["DRDO", "ARMY", "MILY", "MILITARY", "DEFENCE", "DEFENSE", "ORDNANCE", "SPL"]
     return any(k in text for k in keywords)
 
 # ---------------------------
-# Build bar chart
+# Charts
 # ---------------------------
 def build_figure(mil_df):
-    if mil_df.empty or "RAVRAKENAME" not in mil_df.columns:
+    if mil_df.empty:
         return {}
-
-    rake_summary = (
-        mil_df["RAVRAKENAME"]
-        .astype(str)
-        .value_counts()
-        .reset_index()
-    )
-    rake_summary.columns = ["Rake Name", "Count"]
-    rake_summary["Count"] = rake_summary["Count"].astype(int)
+    summary = mil_df["RAVRAKENAME"].astype(str).value_counts().reset_index()
+    summary.columns = ["Rake Name", "Count"]
 
     fig = px.bar(
-        rake_summary,
+        summary,
         x="Rake Name",
         y="Count",
         text="Count",
@@ -82,209 +70,206 @@ def build_figure(mil_df):
     fig.update_yaxes(tickformat="d")
     return fig
 
+def build_datewise_figure(mil_df):
+    if mil_df.empty or "Date" not in mil_df.columns:
+        return {}
+
+    summary = (
+        mil_df.groupby(["Date", "RAVRAKENAME"])
+        .size()
+        .reset_index(name="Count")
+        .sort_values("Date")
+    )
+
+    fig = px.bar(
+        summary,
+        x="Date",
+        y="Count",
+        color="RAVRAKENAME",
+        text="Count",
+        title="Date-wise Military Movement Count (Rake-wise)",
+        template="plotly_white"
+    )
+    fig.update_layout(barmode="stack")
+    fig.update_traces(textposition="inside")
+    fig.update_yaxes(tickformat="d")
+    return fig
+
 # ---------------------------
-# Initial data load
+# Load Data
 # ---------------------------
 df = load_data()
 df["Military_Flag"] = df.apply(detect_military, axis=1)
-mil_df = df[df["Military_Flag"] == True].copy()
+mil_df = df[df["Military_Flag"]].copy()
 
 TARGET_RAKE = "DRDO/SPL"
-
-if "RAVRAKENAME" in mil_df.columns:
-    mil_df = mil_df[
-        mil_df["RAVRAKENAME"]
-        .astype(str)
-        .str.contains(TARGET_RAKE, case=False, na=False)
-    ]
-
-fig_military_flag = build_figure(mil_df)
-
-station_cols = [
-    c for c in ["RAVRAKENAME", "RAVSTTNFROM", "RAVSRVGSTTN"]
-    if c in mil_df.columns
+mil_df = mil_df[
+    mil_df["RAVRAKENAME"].astype(str).str.contains(TARGET_RAKE, case=False, na=False)
 ]
+
+fig_rake = build_figure(mil_df)
+fig_datewise = build_datewise_figure(mil_df)
+
+station_cols = [c for c in ["RAVRAKENAME", "RAVSTTNFROM", "RAVSRVGSTTN"] if c in mil_df.columns]
 station_df = mil_df[station_cols].drop_duplicates()
+
+# ---------------------------
+# Tooltip Components
+# ---------------------------
+def TOOLTIP(word, definition, color):
+    return html.Span(
+        word,
+        title=definition,
+        style={
+            "color": color,
+            "fontWeight": "600",
+            "textDecoration": "underline dotted",
+            "cursor": "help"
+        }
+    )
+
+RAKE = lambda: TOOLTIP(
+    "Rake",
+    "A fixed group of railway wagons that move together as one unit from origin to destination.",
+    "#f1c40f"
+)
+DRDO = lambda: TOOLTIP(
+    "DRDO",
+    "Defence Research and Development Organisation consignments via Indian Railways.",
+    "#1abc9c"
+)
+SPL = lambda: TOOLTIP(
+    "SPL",
+    "Special priority rake movement for sensitive or time-critical cargo.",
+    "#9b59b6"
+)
+NGCM = lambda: TOOLTIP(
+    "NGCM",
+    "New Generation Covered Wagon for secure defence transportation.",
+    "#3498db"
+)
+
+# ---------------------------
+# UI Styles
+# ---------------------------
+PAGE = {
+    "backgroundColor": "#eef2f7",
+    "padding": "30px",
+    "fontFamily": "Segoe UI, Roboto, Arial"
+}
+
+CONTAINER = {
+    "maxWidth": "1400px",
+    "margin": "0 auto"
+}
+
+CARD = {
+    "backgroundColor": "white",
+    "padding": "22px",
+    "borderRadius": "14px",
+    "boxShadow": "0 4px 14px rgba(0,0,0,0.07)",
+    "marginBottom": "24px"
+}
+
+KPI = {
+    "flex": "1",
+    "padding": "24px",
+    "borderRadius": "14px",
+    "background": "linear-gradient(135deg, #ffffff, #f8f9fb)",
+    "boxShadow": "0 4px 14px rgba(0,0,0,0.07)",
+    "textAlign": "center"
+}
 
 # ---------------------------
 # Dash App
 # ---------------------------
 app = Dash(__name__)
 
-app.layout = html.Div(
-    style={
-        "backgroundColor": "#f4f6f9",
-        "padding": "20px",
-        "fontFamily": "Segoe UI, Arial"
-    },
-    children=[
+app.index_string = """
+<!DOCTYPE html>
+<html>
+<head>
+{%metas%}
+{%title%}
+{%favicon%}
+{%css%}
+<style>
+span[title]:hover { color:#e74c3c !important; }
+</style>
+</head>
+<body>
+{%app_entry%}
+<footer>
+{%config%}
+{%scripts%}
+{%renderer%}
+</footer>
+</body>
+</html>
+"""
+
+app.layout = html.Div(style=PAGE, children=[
+    html.Div(style=CONTAINER, children=[
 
         # Header
-        html.Div(
-            style={
-                "backgroundColor": "#1f2c3c",
-                "color": "white",
-                "padding": "20px",
-                "borderRadius": "8px",
-                "marginBottom": "15px"
-            },
-            children=[
-                html.H2("Military-Related Railway Movement Dashboard", style={"margin": "0"})
-            ]
-        ),
+        html.Div(style={
+            "background": "linear-gradient(90deg,#1f2c3c,#34495e)",
+            "color": "white",
+            "padding": "28px",
+            "borderRadius": "16px",
+            "marginBottom": "28px"
+        }, children=[
+            html.H2(
+                ["Military Railway Movement Dashboard (", RAKE(), " | ", DRDO(), " | ", SPL(), " | ", NGCM(), ")"],
+                style={"margin": "0"}
+            ),
+            html.P(
+                ["Strategic ", RAKE(), " analytics for defence logistics"],
+                style={"opacity": "0.85", "marginTop": "6px"}
+            )
+        ]),
 
-        # Refresh Button
-        html.Button(
-            "🔄 Refresh Data",
-            id="refresh-btn",
-            n_clicks=0,
-            disabled=False,
-            style={
-                "backgroundColor": "#2c3e50",
-                "color": "white",
-                "border": "none",
-                "padding": "10px 18px",
-                "borderRadius": "6px",
-                "cursor": "pointer",
-                "marginBottom": "20px"
-            }
-        ),
+        # KPIs
+        html.Div(style={"display": "flex", "gap": "22px", "marginBottom": "28px"}, children=[
+            html.Div(style=KPI, children=[
+                html.Div("Total Records", style={"color": "#7f8c8d"}),
+                html.Div(len(df), style={"fontSize": "34px", "fontWeight": "700"})
+            ]),
+            html.Div(style=KPI, children=[
+                html.Div(["Military ", RAKE(), " Records"], style={"color": "#7f8c8d"}),
+                html.Div(len(mil_df), style={"fontSize": "34px", "fontWeight": "700", "color": "#c0392b"})
+            ])
+        ]),
 
-        # KPI Cards
-        html.Div(
-            style={"display": "flex", "gap": "20px", "marginBottom": "20px"},
-            children=[
-                html.Div(
-                    style={
-                        "flex": "1",
-                        "backgroundColor": "white",
-                        "padding": "15px",
-                        "borderRadius": "8px",
-                        "boxShadow": "0 2px 6px rgba(0,0,0,0.1)"
-                    },
-                    children=[
-                        html.H4("Total Records"),
-                        html.H2(id="total-records", children=len(df))
-                    ]
-                ),
-                html.Div(
-                    style={
-                        "flex": "1",
-                        "backgroundColor": "white",
-                        "padding": "15px",
-                        "borderRadius": "8px",
-                        "boxShadow": "0 2px 6px rgba(0,0,0,0.1)"
-                    },
-                    children=[
-                        html.H4("Military-Related Records"),
-                        html.H2(id="military-records", children=len(mil_df))
-                    ]
-                )
-            ]
-        ),
-
-        # Chart
-        html.Div(
-            style={
-                "backgroundColor": "white",
-                "padding": "20px",
-                "borderRadius": "8px",
-                "boxShadow": "0 2px 6px rgba(0,0,0,0.1)",
-                "marginBottom": "20px"
-            },
-            children=[
-                dcc.Loading(
-                    type="circle",
-                    children=[
-                        dcc.Graph(id="rake-bar-chart", figure=fig_military_flag)
-                    ]
-                )
-            ]
-        ),
+        # Charts
+        html.Div(style=CARD, children=[dcc.Graph(figure=fig_rake)]),
+        html.Div(style=CARD, children=[dcc.Graph(figure=fig_datewise)]),
 
         # Table
-        html.Div(
-            style={
-                "backgroundColor": "white",
-                "padding": "20px",
-                "borderRadius": "8px",
-                "boxShadow": "0 2px 6px rgba(0,0,0,0.1)"
-            },
-            children=[
-                html.H4("Station Codes (Origin → Destination)"),
-                dash_table.DataTable(
-                    id="station-table",
-                    columns=[{"name": c, "id": c} for c in station_df.columns],
-                    data=station_df.to_dict("records"),
-                    page_size=15,
-                    style_header={
-                        "backgroundColor": "#2c3e50",
-                        "color": "white",
-                        "fontWeight": "bold"
-                    },
-                    style_cell={
-                        "fontFamily": "monospace",
-                        "fontSize": 13,
-                        "padding": "8px",
-                        "textAlign": "left"
-                    },
-                    style_data_conditional=[
-                        {
-                            "if": {"row_index": "odd"},
-                            "backgroundColor": "#f2f2f2"
-                        }
-                    ]
-                )
-            ]
-        )
-    ]
-)
-
-# ---------------------------
-# Refresh callback (FIXED)
-# ---------------------------
-@app.callback(
-    Output("rake-bar-chart", "figure"),
-    Output("station-table", "data"),
-    Output("station-table", "columns"),
-    Output("total-records", "children"),
-    Output("military-records", "children"),
-    Output("refresh-btn", "children"),
-    Output("refresh-btn", "disabled"),
-    Input("refresh-btn", "n_clicks")
-)
-def refresh_dashboard(n_clicks):
-
-    df = load_data()
-    df["Military_Flag"] = df.apply(detect_military, axis=1)
-    mil_df = df[df["Military_Flag"] == True].copy()
-
-    if "RAVRAKENAME" in mil_df.columns:
-        mil_df = mil_df[
-            mil_df["RAVRAKENAME"]
-            .astype(str)
-            .str.contains(TARGET_RAKE, case=False, na=False)
-        ]
-
-    fig = build_figure(mil_df)
-
-    station_cols = [
-        c for c in ["RAVRAKENAME", "RAVSTTNFROM", "RAVSRVGSTTN"]
-        if c in mil_df.columns
-    ]
-    station_df = mil_df[station_cols].drop_duplicates()
-
-    table_columns = [{"name": c, "id": c} for c in station_df.columns]
-
-    return (
-        fig,
-        station_df.to_dict("records"),
-        table_columns,
-        len(df),
-        len(mil_df),
-        "🔄 Refresh Data",
-        False
-    )
+        html.Div(style=CARD, children=[
+            html.H4(["Station Codes per ", RAKE(), " (", DRDO(), " / ", SPL(), " / ", NGCM(), ")"]),
+            dash_table.DataTable(
+                columns=[{"name": c, "id": c} for c in station_cols],
+                data=station_df.to_dict("records"),
+                page_size=15,
+                style_header={
+                    "backgroundColor": "#2c3e50",
+                    "color": "white",
+                    "fontWeight": "bold"
+                },
+                style_cell={
+                    "padding": "10px",
+                    "fontFamily": "monospace",
+                    "fontSize": "13px",
+                    "textAlign": "left"
+                },
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f4f6f9"}
+                ]
+            )
+        ])
+    ])
+])
 
 # ---------------------------
 # Run App
