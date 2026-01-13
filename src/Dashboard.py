@@ -96,6 +96,60 @@ def build_datewise_figure(mil_df):
     return fig
 
 # ---------------------------
+# ✅ NEW: Month-wise Chart (Jan–Dec, clean & elegant)
+# ---------------------------
+def build_monthwise_figure(mil_df):
+    if mil_df.empty or "Date" not in mil_df.columns:
+        return {}
+
+    df_m = mil_df.copy()
+    df_m["MonthNum"] = pd.to_datetime(df_m["Date"]).dt.month
+
+    summary = (
+        df_m.groupby("MonthNum")
+        .size()
+        .reindex(range(1, 13), fill_value=0)
+        .reset_index(name="Count")
+    )
+
+    month_map = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+
+    summary["Month"] = summary["MonthNum"].map(month_map)
+
+    fig = px.bar(
+        summary,
+        x="Month",
+        y="Count",
+        text="Count",
+        title="Month-wise Military Movement Count (January–December)",
+        template="plotly_white"
+    )
+
+    fig.update_traces(
+        marker_color="#34495e",
+        textposition="outside"
+    )
+
+    fig.update_yaxes(
+        tickformat="d",
+        title="Total Count"
+    )
+
+    fig.update_xaxes(
+        title="Month",
+        categoryorder="array",
+        categoryarray=list(month_map.values())
+    )
+
+    fig.update_layout(showlegend=False)
+
+    return fig
+
+# ---------------------------
 # Load Data
 # ---------------------------
 df = load_data()
@@ -109,6 +163,7 @@ mil_df = mil_df[
 
 fig_rake = build_figure(mil_df)
 fig_datewise = build_datewise_figure(mil_df)
+fig_monthwise = build_monthwise_figure(mil_df)
 
 station_cols = [c for c in ["RAVRAKENAME", "RAVSTTNFROM", "RAVSRVGSTTN"] if c in mil_df.columns]
 station_df = mil_df[station_cols].drop_duplicates()
@@ -244,6 +299,7 @@ app.layout = html.Div(style=PAGE, children=[
         # Charts
         html.Div(style=CARD, children=[dcc.Graph(figure=fig_rake)]),
         html.Div(style=CARD, children=[dcc.Graph(figure=fig_datewise)]),
+        html.Div(style=CARD, children=[dcc.Graph(figure=fig_monthwise)]),
 
         # Table
         html.Div(style=CARD, children=[
