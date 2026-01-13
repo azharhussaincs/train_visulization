@@ -125,7 +125,7 @@ def build_monthwise_figure(mil_df):
         x="Month",
         y="Count",
         text="Count",
-        title="Month-wise Military Movement Count (January–December)",
+        title="Month-wise Military Movement Count",
         template="plotly_white"
     )
 
@@ -303,7 +303,7 @@ app.layout = html.Div(style=PAGE, children=[
 
         # Table
         html.Div(style=CARD, children=[
-            html.H4(["Station Codes per ", RAKE(), " (", DRDO(), " / ", SPL(), " / ", NGCM(), ")"]),
+            html.H4(["Station  ", RAKE(), " (", DRDO(), " / ", SPL(), " / ", NGCM(), ")"]),
             dash_table.DataTable(
                 columns=[{"name": c, "id": c} for c in station_cols],
                 data=station_df.to_dict("records"),
