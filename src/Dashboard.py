@@ -150,6 +150,31 @@ def build_monthwise_figure(mil_df):
     return fig
 
 # ---------------------------
+# NEW FEATURE: From → To Movement Summary
+# ---------------------------
+def build_from_to_summary(mil_df):
+    if mil_df.empty:
+        return pd.DataFrame()
+
+    summary = (
+        mil_df.groupby(["RAVSTTNFROM", "RAVSRVGSTTN"])
+        .agg(
+            Movement_Count=("Date", "size"),
+            First_Movement=("Date", "min"),
+            Last_Movement=("Date", "max")
+        )
+        .reset_index()
+        .sort_values("Movement_Count", ascending=False)
+    )
+
+    summary["Duration_Days"] = (
+        pd.to_datetime(summary["Last_Movement"]) -
+        pd.to_datetime(summary["First_Movement"])
+    ).dt.days
+
+    return summary
+
+# ---------------------------
 # Load Data
 # ---------------------------
 df = load_data()
@@ -167,6 +192,8 @@ fig_monthwise = build_monthwise_figure(mil_df)
 
 station_cols = [c for c in ["RAVRAKENAME", "RAVSTTNFROM", "RAVSRVGSTTN"] if c in mil_df.columns]
 station_df = mil_df[station_cols].drop_duplicates()
+from_to_df = build_from_to_summary(mil_df)
+
 
 # ---------------------------
 # Tooltip Components
@@ -302,12 +329,23 @@ app.layout = html.Div(style=PAGE, children=[
         html.Div(style=CARD, children=[dcc.Graph(figure=fig_monthwise)]),
 
         # Table
+        # ---------------------------
+        # NEW TABLE: From → To Movement Summary
+        # ---------------------------
         html.Div(style=CARD, children=[
-            html.H4(["Station  ", RAKE(), " (", DRDO(), " / ", SPL(), " / ", NGCM(), ")"]),
+            html.H4("Most Frequent From → To Military Movements"),
             dash_table.DataTable(
-                columns=[{"name": c, "id": c} for c in station_cols],
-                data=station_df.to_dict("records"),
-                page_size=15,
+                columns=[
+                    {"name": "From Station", "id": "RAVSTTNFROM"},
+                    {"name": "To Station", "id": "RAVSRVGSTTN"},
+                    {"name": "Movement Count", "id": "Movement_Count"},
+                    # {"name": "First Movement", "id": "First_Movement"},
+                    # {"name": "Last Movement", "id": "Last_Movement"},
+                    # {"name": "Duration (Days)", "id": "Duration_Days"},
+                ],
+                data=from_to_df.to_dict("records"),
+                page_size=10,
+                sort_action="native",
                 style_header={
                     "backgroundColor": "#2c3e50",
                     "color": "white",
@@ -323,7 +361,8 @@ app.layout = html.Div(style=PAGE, children=[
                     {"if": {"row_index": "odd"}, "backgroundColor": "#f4f6f9"}
                 ]
             )
-        ])
+        ]),
+
     ])
 ])
 
