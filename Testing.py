@@ -1,7 +1,6 @@
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import math   # added for bearing calculation in map arrows
+import plotly.graph_objects as go  # ← added for map
 from dash import Dash, dcc, html, dash_table, Input, Output, State
 import mysql.connector
 import warnings
@@ -185,26 +184,22 @@ def build_from_to_summary(mil_df):
 
 
 # ────────────────────────────────────────────────
-# Map: From → To military movements with direction arrows
+# NEW: Map showing From → To military movements
 # ────────────────────────────────────────────────
 def build_movement_map(mil_df):
     if mil_df.empty or "RAVSTTNFROM" not in mil_df.columns or "RAVSRVGSTTN" not in mil_df.columns:
         return go.Figure().update_layout(title="No movement data available")
 
+    # Count per From-To pair
     flows = (
         mil_df.groupby(["RAVSTTNFROM", "RAVSRVGSTTN"])
         .size()
         .reset_index(name="Count")
         .sort_values("Count", ascending=False)
-        .head(120)
+        .head(150)  # limit to avoid too many overlapping lines
     )
 
-    lats_from = []
-    lons_from = []
-    lats_to   = []
-    lons_to   = []
-    counts    = []
-    hovers    = []
+    lats, lons, texts, sizes = [], [], [], []
 
     for _, row in flows.iterrows():
         fr = str(row["RAVSTTNFROM"]).strip().upper()
@@ -215,80 +210,58 @@ def build_movement_map(mil_df):
             f = STATION_COORDS[fr]
             t = STATION_COORDS[to]
 
-            lats_from.append(f["Latitude"])
-            lons_from.append(f["Longitude"])
-            lats_to.append(t["Latitude"])
-            lons_to.append(t["Longitude"])
-            counts.append(cnt)
-            hovers.append(f"{fr} → {to}<br>Movements: {cnt}")
+            # Origin point
+            lats.append(f["Latitude"])
+            lons.append(f["Longitude"])
+            texts.append(f"{fr} → {to}<br>{cnt} movements")
+            sizes.append(cnt)
 
-    if not lats_from:
+            # Destination point
+            lats.append(t["Latitude"])
+            lons.append(t["Longitude"])
+            texts.append(f"{fr} → {to}<br>{cnt} movements")
+            sizes.append(cnt)
+
+    if not lats:
         return go.Figure().update_layout(title="No coordinates found for these stations")
 
     fig = go.Figure()
 
-    # Helper: calculate bearing (direction) in degrees clockwise from North
-    def get_bearing(lat1, lon1, lat2, lon2):
-        lat1 = math.radians(lat1)
-        lon1 = math.radians(lon1)
-        lat2 = math.radians(lat2)
-        lon2 = math.radians(lon2)
-
-        dlon = lon2 - lon1
-        y = math.sin(dlon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-        bearing = math.degrees(math.atan2(y, x))
-        return (bearing + 360) % 360
-
-    # Draw lines
-    for latf, lonf, latt, lont in zip(lats_from, lons_from, lats_to, lons_to):
-        fig.add_trace(go.Scattermap(
-            lat=[latf, latt],
-            lon=[lonf, lont],
+    # Lines (simple straight — looks better than many arcs in dense areas)
+    for i in range(0, len(lats), 2):
+        fig.add_trace(go.Scattermapbox(
+            lat=[lats[i], lats[i + 1]],
+            lon=[lons[i], lons[i + 1]],
             mode="lines",
-            line=dict(width=1.8, color="#c0392b"),
-            opacity=0.6,
+            line=dict(width=1.8, color="#e74c3c"),
+            opacity=0.5,
             hoverinfo="skip"
         ))
 
-    # Draw small arrows at destination (pointing in travel direction)
-    for latf, lonf, latt, lont in zip(lats_from, lons_from, lats_to, lons_to):
-        angle = get_bearing(latf, lonf, latt, lont)
-        fig.add_trace(go.Scattermap(
-            lat=[latt],
-            lon=[lont],
-            mode="markers",
-            marker=dict(
-                symbol="arrow-bar-up",
-                size=10,
-                color="#c0392b",
-                opacity=0.95,
-                angle=angle
-            ),
-            hoverinfo="skip"
-        ))
-
-    # Station markers + count label (only at origin)
-    fig.add_trace(go.Scattermap(
-        lat=lats_from + lats_to,
-        lon=lons_from + lons_to,
+    # Stations (bigger = more movements)
+    fig.add_trace(go.Scattermapbox(
+        lat=lats,
+        lon=lons,
         mode="markers+text",
-        marker=dict(size=7, color="#2c3e50", opacity=0.9),
-        text=[f"{c}" if i < len(counts) else "" for i, c in enumerate(counts * 2)],
+        marker=dict(
+            size=[max(8, min(35, s ** 0.6 * 4)) for s in sizes],
+            color="#2c3e50",
+            opacity=0.85
+        ),
+        text=[f"{s}" if i % 2 == 0 else "" for i, s in enumerate(sizes)],
         textposition="top center",
-        textfont=dict(size=9, color="#111"),
-        hovertext=hovers * 2,
+        hovertext=texts,
         hoverinfo="text",
         name="Stations & Flows"
     ))
 
     fig.update_layout(
         title="Military Rake Movements (DRDO/SPL) — From → To",
-        map_style="open-street-map",
-        map_zoom=4.8,
-        map_center={"lat": 21.0, "lon": 78.5},
+        mapbox_style="open-street-map",  # alternatives: "carto-positron", "stamen-toner"
+        mapbox_zoom=4.8,
+        mapbox_center={"lat": 21.0, "lon": 78.5},  # ~ center of India
         height=580,
-        margin={"r":10, "t":60, "l":10, "b":10},
+        margin={"r": 10, "t": 60, "l": 10, "b": 10},
         showlegend=False
     )
 
@@ -433,6 +406,8 @@ app.layout = html.Div(style=PAGE, children=[
         html.Div(style=CARD, children=[dcc.Graph(id="graph-rake")]),
         html.Div(style=CARD, children=[dcc.Graph(id="graph-datewise")]),
         html.Div(style=CARD, children=[dcc.Graph(id="graph-monthwise")]),
+
+        # ──────── NEW MAP ────────
         html.Div(style=CARD, children=[dcc.Graph(id="graph-map")]),
 
         # Table
@@ -476,40 +451,47 @@ app.layout = html.Div(style=PAGE, children=[
     Output("graph-rake", "figure"),
     Output("graph-datewise", "figure"),
     Output("graph-monthwise", "figure"),
-    Output("graph-map", "figure"),
+    Output("graph-map", "figure"),  # ← added
     Output("from-to-table", "data"),
     Input("submit-btn", "n_clicks"),
     State("year-dropdown", "value"),
     State("month-dropdown", "value")
 )
 def refresh_dashboard(n_clicks, selected_year, selected_month):
+    # First load (n_clicks == 0) → show ALL data
     if n_clicks == 0:
-        df = load_data()
+        df = load_data()  # no year filter
     else:
+        # Load data for selected year (or all if year is None)
         df = load_data(selected_year)
+
+        # Apply optional month filter
         if selected_month is not None and "Date" in df.columns:
             df = df[df["Month"] == selected_month]
 
     if df.empty:
         return 0, 0, {}, {}, {}, {}, []
 
+    # Military detection
     df["Military_Flag"] = df.apply(detect_military, axis=1)
     mil_df = df[df["Military_Flag"]].copy()
 
     if mil_df.empty:
         return len(df), 0, {}, {}, {}, go.Figure(), []
 
+    # Your specific rake filter
     TARGET_RAKE = "DRDO/SPL"
     mil_df = mil_df[
         mil_df["RAVRAKENAME"].astype(str)
         .str.contains(TARGET_RAKE, case=False, na=False)
     ]
 
-    fig_rake      = build_figure(mil_df)
-    fig_datewise  = build_datewise_figure(mil_df)
+    # Build visuals
+    fig_rake = build_figure(mil_df)
+    fig_datewise = build_datewise_figure(mil_df)
     fig_monthwise = build_monthwise_figure(mil_df)
-    fig_map       = build_movement_map(mil_df)
-    from_to_df    = build_from_to_summary(mil_df)
+    fig_map = build_movement_map(mil_df)  # ← added
+    from_to_df = build_from_to_summary(mil_df)
 
     return (
         len(df),
@@ -517,7 +499,7 @@ def refresh_dashboard(n_clicks, selected_year, selected_month):
         fig_rake,
         fig_datewise,
         fig_monthwise,
-        fig_map,
+        fig_map,  # ← added
         from_to_df.to_dict("records")
     )
 
